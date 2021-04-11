@@ -1,6 +1,5 @@
-// This file is part of Substrate.
-
 // Copyright (C) 2019-2021 Parity Technologies (UK) Ltd.
+// Copyright (C) 2021 Subpace Labs, Inc.
 // SPDX-License-Identifier: Apache-2.0
 
 // Licensed under the Apache License, Version 2.0 (the "License");
@@ -37,8 +36,7 @@ use sp_runtime::traits::Hash;
 /// wins whatever game they play.
 ///
 /// All input commitments used with `RandomnessFromTwoEpochsAgo` should come from at least
-/// three epochs ago. We require BABE session keys be registered at least three epochs
-/// before being used to derive `CurrentBlockRandomness` for example.
+/// three epochs ago.
 ///
 /// All users learn `RandomnessFromTwoEpochsAgo` when epoch `current_epoch - 1` starts,
 /// although some learn it a few block earlier inside epoch `current_epoch - 2`.
@@ -97,6 +95,7 @@ pub struct RandomnessFromOneEpochAgo<T>(sp_std::marker::PhantomData<T>);
 /// themselves learned this randomness at the beginning of epoch `current_epoch - 2`, at
 /// the same time as they learn `RandomnessFromTwoEpochsAgo`.
 ///
+/// TODO: Update this block
 /// Aside from just biasing `RandomnessFromTwoEpochsAgo`, adversaries could also bias
 /// `CurrentBlockRandomness` by never announcing their block if doing so yields an
 /// unfavorable randomness. As such, `CurrentBlockRandomness` should be considered weaker
@@ -104,6 +103,7 @@ pub struct RandomnessFromOneEpochAgo<T>(sp_std::marker::PhantomData<T>);
 /// remains constrained by declared staking, while a randomness source like block hash is
 /// only constrained by adversaries' unknowable computational power.
 ///
+/// TODO: Update this block
 /// As an example use, parachains could assign block production slots based upon the
 /// `CurrentBlockRandomness` of their relay parent or relay parent's parent, provided the
 /// parachain registers collators but avoids censorship sensitive functionality like

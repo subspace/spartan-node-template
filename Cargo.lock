@@ -4268,7 +4268,7 @@ dependencies = [
  "parity-scale-codec",
  "serde",
  "sp-application-crypto 3.0.0",
- "sp-consensus-babe",
+ "sp-consensus-poc",
  "sp-consensus-vrf",
  "sp-core 3.0.0",
  "sp-io 3.0.0",

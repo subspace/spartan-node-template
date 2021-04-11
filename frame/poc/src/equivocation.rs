@@ -1,6 +1,5 @@
-// This file is part of Substrate.
-
 // Copyright (C) 2020-2021 Parity Technologies (UK) Ltd.
+// Copyright (C) 2021 Subpace Labs, Inc.
 // SPDX-License-Identifier: Apache-2.0
 
 // Licensed under the Apache License, Version 2.0 (the "License");
@@ -18,25 +17,25 @@
 //!
 //! An opt-in utility module for reporting equivocations.
 //!
-//! This module defines an offence type for BABE equivocations
+//! This module defines an offence type for PoC equivocations
 //! and some utility traits to wire together:
 //! - a system for reporting offences;
 //! - a system for submitting unsigned transactions;
 //! - a way to get the current block author;
 //!
 //! These can be used in an offchain context in order to submit equivocation
-//! reporting extrinsics (from the client that's import BABE blocks).
-//! And in a runtime context, so that the BABE pallet can validate the
+//! reporting extrinsics (from the client that's import PoC blocks).
+//! And in a runtime context, so that the PoC pallet can validate the
 //! equivocation proofs in the extrinsic and report the offences.
 //!
 //! IMPORTANT:
 //! When using this module for enabling equivocation reporting it is required
-//! that the `ValidateUnsigned` for the BABE pallet is used in the runtime
+//! that the `ValidateUnsigned` for the PoC pallet is used in the runtime
 //! definition.
 //!
 
 use frame_support::traits::{Get, KeyOwnerProofSystem};
-use sp_consensus_babe::{EquivocationProof, Slot};
+use sp_consensus_poc::{EquivocationProof, Slot};
 use sp_runtime::transaction_validity::{
 	InvalidTransaction, TransactionPriority, TransactionSource, TransactionValidity,
 	TransactionValidityError, ValidTransaction,
@@ -50,7 +49,7 @@ use sp_std::prelude::*;
 
 use crate::{Call, Pallet, Config};
 
-/// A trait with utility methods for handling equivocation reports in BABE.
+/// A trait with utility methods for handling equivocation reports in PoC.
 /// The trait provides methods for reporting an offence triggered by a valid
 /// equivocation report, checking the current block author (to declare as the
 /// reporter), and also for creating and submitting equivocation report
@@ -63,7 +62,7 @@ pub trait HandleEquivocation<T: Config> {
 	/// Report an offence proved by the given reporters.
 	fn report_offence(
 		reporters: Vec<T::AccountId>,
-		offence: BabeEquivocationOffence<T::KeyOwnerIdentification>,
+		offence: PoCEquivocationOffence<T::KeyOwnerIdentification>,
 	) -> Result<(), OffenceError>;
 
 	/// Returns true if all of the offenders at the given time slot have already been reported.
@@ -84,7 +83,7 @@ impl<T: Config> HandleEquivocation<T> for () {
 
 	fn report_offence(
 		_reporters: Vec<T::AccountId>,
-		_offence: BabeEquivocationOffence<T::KeyOwnerIdentification>,
+		_offence: PoCEquivocationOffence<T::KeyOwnerIdentification>,
 	) -> Result<(), OffenceError> {
 		Ok(())
 	}
@@ -132,7 +131,7 @@ where
 	R: ReportOffence<
 		T::AccountId,
 		T::KeyOwnerIdentification,
-		BabeEquivocationOffence<T::KeyOwnerIdentification>,
+		PoCEquivocationOffence<T::KeyOwnerIdentification>,
 	>,
 	// The longevity (in blocks) that the equivocation report is valid for. When using the staking
 	// pallet this should be the bonding duration.
@@ -142,7 +141,7 @@ where
 
 	fn report_offence(
 		reporters: Vec<T::AccountId>,
-		offence: BabeEquivocationOffence<T::KeyOwnerIdentification>,
+		offence: PoCEquivocationOffence<T::KeyOwnerIdentification>,
 	) -> Result<(), OffenceError> {
 		R::report_offence(reporters, offence)
 	}
@@ -161,11 +160,11 @@ where
 
 		match SubmitTransaction::<T, Call<T>>::submit_unsigned_transaction(call.into()) {
 			Ok(()) => log::info!(
-				target: "runtime::babe",
-				"Submitted BABE equivocation report.",
+				target: "runtime::poc",
+				"Submitted PoC equivocation report.",
 			),
 			Err(e) => log::error!(
-				target: "runtime::babe",
+				target: "runtime::poc",
 				"Error submitting equivocation report: {:?}",
 				e,
 			),
@@ -191,7 +190,7 @@ impl<T: Config> frame_support::unsigned::ValidateUnsigned for Pallet<T> {
 				TransactionSource::Local | TransactionSource::InBlock => { /* allowed */ }
 				_ => {
 					log::warn!(
-						target: "runtime::babe",
+						target: "runtime::poc",
 						"rejecting unsigned report equivocation transaction because it is not local/in-block.",
 					);
 
@@ -204,7 +203,7 @@ impl<T: Config> frame_support::unsigned::ValidateUnsigned for Pallet<T> {
 
 			let longevity = <T::HandleEquivocation as HandleEquivocation<T>>::ReportLongevity::get();
 
-			ValidTransaction::with_tag_prefix("BabeEquivocation")
+			ValidTransaction::with_tag_prefix("PoCEquivocation")
 				// We assign the maximum priority for any equivocation report.
 				.priority(TransactionPriority::max_value())
 				// Only one equivocation report for the same offender at the same slot.
@@ -236,7 +235,7 @@ fn is_known_offence<T: Config>(
 ) -> Result<(), TransactionValidityError> {
 	// check the membership proof to extract the offender's id
 	let key = (
-		sp_consensus_babe::KEY_TYPE,
+		sp_consensus_poc::KEY_TYPE,
 		equivocation_proof.offender.clone(),
 	);
 
@@ -252,11 +251,11 @@ fn is_known_offence<T: Config>(
 	}
 }
 
-/// A BABE equivocation offence report.
+/// A PoC equivocation offence report.
 ///
 /// When a validator released two or more blocks at the same slot.
-pub struct BabeEquivocationOffence<FullIdentification> {
-	/// A babe slot in which this incident happened.
+pub struct PoCEquivocationOffence<FullIdentification> {
+	/// A PoC slot in which this incident happened.
 	pub slot: Slot,
 	/// The session index in which the incident happened.
 	pub session_index: SessionIndex,
@@ -267,9 +266,9 @@ pub struct BabeEquivocationOffence<FullIdentification> {
 }
 
 impl<FullIdentification: Clone> Offence<FullIdentification>
-	for BabeEquivocationOffence<FullIdentification>
+	for PoCEquivocationOffence<FullIdentification>
 {
-	const ID: Kind = *b"babe:equivocatio";
+	const ID: Kind = *b"poc:equivocation";
 	type TimeSlot = Slot;
 
 	fn offenders(&self) -> Vec<FullIdentification> {

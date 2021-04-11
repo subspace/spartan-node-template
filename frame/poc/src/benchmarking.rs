@@ -1,6 +1,5 @@
-// This file is part of Substrate.
-
 // Copyright (C) 2020-2021 Parity Technologies (UK) Ltd.
+// Copyright (C) 2021 Subpace Labs, Inc.
 // SPDX-License-Identifier: Apache-2.0
 
 // Licensed under the Apache License, Version 2.0 (the "License");
@@ -15,7 +14,7 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-//! Benchmarks for the BABE Pallet.
+//! Benchmarks for the PoC Pallet.
 
 use super::*;
 use frame_benchmarking::benchmarks;
@@ -54,14 +53,14 @@ benchmarks! {
 			175, 145, 255, 7, 121, 133
 		];
 
-		let equivocation_proof1: sp_consensus_babe::EquivocationProof<Header> =
+		let equivocation_proof1: sp_consensus_poc::EquivocationProof<Header> =
 			Decode::decode(&mut &EQUIVOCATION_PROOF_BLOB[..]).unwrap();
 
 		let equivocation_proof2 = equivocation_proof1.clone();
 	}: {
-		sp_consensus_babe::check_equivocation_proof::<Header>(equivocation_proof1);
+		sp_consensus_poc::check_equivocation_proof::<Header>(equivocation_proof1);
 	} verify {
-		assert!(sp_consensus_babe::check_equivocation_proof::<Header>(equivocation_proof2));
+		assert!(sp_consensus_poc::check_equivocation_proof::<Header>(equivocation_proof2));
 	}
 }
 
