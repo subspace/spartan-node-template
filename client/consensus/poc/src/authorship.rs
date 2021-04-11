@@ -91,16 +91,3 @@ pub(super) fn calculate_threshold(c: (u64, u64)) -> u128 {
 pub(super) fn check_threshold(inout: &VRFInOut, threshold: u128) -> bool {
 	u128::from_le_bytes(inout.make_bytes::<[u8; 16]>(POC_VRF_PREFIX)) < threshold
 }
-
-/// Tries to claim the given slot number. This method starts by trying to claim
-/// a primary VRF based slot. If we are not able to claim it, then if we have
-/// secondary slots enabled for the given epoch, we will fallback to trying to
-/// claim a secondary slot.
-pub fn claim_slot(
-	_slot: Slot,
-	_epoch: &Epoch,
-	_keystore: &SyncCryptoStorePtr,
-) -> Option<(PreDigest, FarmerId)> {
-	// TODO: Will this be implemented here or on the farmer
-	None
-}
