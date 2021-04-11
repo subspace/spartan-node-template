@@ -24,7 +24,7 @@ use codec::{Decode, Encode};
 use sc_client_api::backend::AuxStore;
 use sp_blockchain::{Result as ClientResult, Error as ClientError};
 use sp_runtime::traits::Block as BlockT;
-use sp_consensus_babe::{BabeBlockWeight, BabeGenesisConfiguration};
+use sp_consensus_poc::{BabeBlockWeight, BabeGenesisConfiguration};
 use sc_consensus_epochs::{EpochChangesFor, SharedEpochChanges, migration::EpochChangesForV0};
 use crate::{Epoch, migration::EpochV0};
 
@@ -142,7 +142,7 @@ mod test {
 	use substrate_test_runtime_client;
 	use sp_core::H256;
 	use sp_runtime::traits::NumberFor;
-	use sp_consensus_babe::{AllowedSlots, BabeGenesisConfiguration};
+	use sp_consensus_poc::{AllowedSlots, BabeGenesisConfiguration};
 	use sc_consensus_epochs::{PersistedEpoch, PersistedEpochHeader, EpochHeader};
 	use sp_consensus::Error as ConsensusError;
 	use sc_network_test::Block as TestBlock;

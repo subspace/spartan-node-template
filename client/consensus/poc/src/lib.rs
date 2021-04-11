@@ -65,7 +65,7 @@
 
 #![forbid(unsafe_code)]
 #![warn(missing_docs)]
-pub use sp_consensus_babe::{
+pub use sp_consensus_poc::{
 	BabeApi, ConsensusLog, BABE_ENGINE_ID, BabeEpochConfiguration, BabeGenesisConfiguration,
 	AuthorityId, AuthorityPair, AuthoritySignature, BabeAuthorityWeight, VRF_OUTPUT_LENGTH,
 	digests::{
@@ -96,7 +96,7 @@ use sp_consensus::{
 	ForkChoiceStrategy, BlockImportParams, BlockOrigin, Error as ConsensusError,
 	SelectChain, SlotData, import_queue::{Verifier, BasicQueue, DefaultImportQueue, CacheKeyId},
 };
-use sp_consensus_babe::inherents::BabeInherentData;
+use sp_consensus_poc::inherents::BabeInherentData;
 use sp_timestamp::TimestampInherentData;
 use sc_client_api::{
 	backend::AuxStore, BlockchainEvents, ProvideUncles,
@@ -289,7 +289,7 @@ impl<B: BlockT> std::convert::From<Error<B>> for String {
 	}
 }
 
-fn babe_err<B: BlockT>(error: Error<B>) -> Error<B> {
+fn poc_err<B: BlockT>(error: Error<B>) -> Error<B> {
 	debug!(target: "babe", "{}", error);
 	error
 }
@@ -517,7 +517,7 @@ async fn answer_requests<B: BlockT, C>(
 						|slot| Epoch::genesis(&genesis_config, slot)
 					).ok_or_else(|| Error::<B>::FetchEpoch(parent_hash))?;
 
-					Ok(sp_consensus_babe::Epoch {
+					Ok(sp_consensus_poc::Epoch {
 						epoch_index: viable_epoch.as_ref().epoch_index,
 						start_slot: viable_epoch.as_ref().start_slot,
 						duration: viable_epoch.as_ref().duration,
@@ -543,7 +543,7 @@ pub enum BabeRequest<B: BlockT> {
 		B::Hash,
 		NumberFor<B>,
 		Slot,
-		oneshot::Sender<Result<sp_consensus_babe::Epoch, Error<B>>>,
+		oneshot::Sender<Result<sp_consensus_poc::Epoch, Error<B>>>,
 	),
 }
 
@@ -867,12 +867,12 @@ pub fn find_pre_digest<B: BlockT>(header: &B::Header) -> Result<PreDigest, Error
 	for log in header.digest().logs() {
 		trace!(target: "babe", "Checking log {:?}, looking for pre runtime digest", log);
 		match (log.as_babe_pre_digest(), pre_digest.is_some()) {
-			(Some(_), true) => return Err(babe_err(Error::MultiplePreRuntimeDigests)),
+			(Some(_), true) => return Err(poc_err(Error::MultiplePreRuntimeDigests)),
 			(None, _) => trace!(target: "babe", "Ignoring digest not meant for us"),
 			(s, false) => pre_digest = s,
 		}
 	}
-	pre_digest.ok_or_else(|| babe_err(Error::NoPreRuntimeDigest))
+	pre_digest.ok_or_else(|| poc_err(Error::NoPreRuntimeDigest))
 }
 
 /// Extract the BABE epoch change digest from the given header, if it exists.
@@ -885,7 +885,7 @@ fn find_next_epoch_digest<B: BlockT>(header: &B::Header)
 		trace!(target: "babe", "Checking log {:?}, looking for epoch change digest.", log);
 		let log = log.try_to::<ConsensusLog>(OpaqueDigestItemId::Consensus(&BABE_ENGINE_ID));
 		match (log, epoch_digest.is_some()) {
-			(Some(ConsensusLog::NextEpochData(_)), true) => return Err(babe_err(Error::MultipleEpochChangeDigests)),
+			(Some(ConsensusLog::NextEpochData(_)), true) => return Err(poc_err(Error::MultipleEpochChangeDigests)),
 			(Some(ConsensusLog::NextEpochData(epoch)), false) => epoch_digest = Some(epoch),
 			_ => trace!(target: "babe", "Ignoring digest not meant for us"),
 		}
@@ -904,7 +904,7 @@ fn find_next_config_digest<B: BlockT>(header: &B::Header)
 		trace!(target: "babe", "Checking log {:?}, looking for epoch change digest.", log);
 		let log = log.try_to::<ConsensusLog>(OpaqueDigestItemId::Consensus(&BABE_ENGINE_ID));
 		match (log, config_digest.is_some()) {
-			(Some(ConsensusLog::NextConfigData(_)), true) => return Err(babe_err(Error::MultipleConfigChangeDigests)),
+			(Some(ConsensusLog::NextConfigData(_)), true) => return Err(poc_err(Error::MultipleConfigChangeDigests)),
 			(Some(ConsensusLog::NextConfigData(config)), false) => config_digest = Some(config),
 			_ => trace!(target: "babe", "Ignoring digest not meant for us"),
 		}
@@ -1226,9 +1226,9 @@ pub fn register_babe_inherent_data_provider(
 	slot_duration: Duration,
 ) -> Result<(), sp_consensus::Error> {
 	debug!(target: "babe", "Registering");
-	if !inherent_data_providers.has_provider(&sp_consensus_babe::inherents::INHERENT_IDENTIFIER) {
+	if !inherent_data_providers.has_provider(&sp_consensus_poc::inherents::INHERENT_IDENTIFIER) {
 		inherent_data_providers
-			.register_provider(sp_consensus_babe::inherents::InherentDataProvider::new(slot_duration))
+			.register_provider(sp_consensus_poc::inherents::InherentDataProvider::new(slot_duration))
 			.map_err(Into::into)
 			.map_err(sp_consensus::Error::InherentData)
 	} else {
@@ -1314,7 +1314,7 @@ impl<Block, Client, Inner> BlockImport<Block> for BabeBlockImport<Block, Client,
 		let parent_hash = *block.header.parent_hash();
 		let parent_header = self.client.header(BlockId::Hash(parent_hash))
 			.map_err(|e| ConsensusError::ChainLookup(e.to_string()))?
-			.ok_or_else(|| ConsensusError::ChainLookup(babe_err(
+			.ok_or_else(|| ConsensusError::ChainLookup(poc_err(
 				Error::<Block>::ParentUnavailable(parent_hash, hash)
 			).into()))?;
 
@@ -1326,7 +1326,7 @@ impl<Block, Client, Inner> BlockImport<Block> for BabeBlockImport<Block, Client,
 		// make sure that slot number is strictly increasing
 		if slot <= parent_slot {
 			return Err(
-				ConsensusError::ClientImport(babe_err(
+				ConsensusError::ClientImport(poc_err(
 					Error::<Block>::SlotMustIncrease(parent_slot, slot)
 				).into())
 			);
@@ -1353,7 +1353,7 @@ impl<Block, Client, Inner> BlockImport<Block> for BabeBlockImport<Block, Client,
 					aux_schema::load_block_weight(&*self.client, parent_hash)
 						.map_err(|e| ConsensusError::ClientImport(e.to_string()))?
 					.ok_or_else(|| ConsensusError::ClientImport(
-						babe_err(Error::<Block>::ParentBlockNoAssociatedWeight(hash)).into()
+						poc_err(Error::<Block>::ParentBlockNoAssociatedWeight(hash)).into()
 					))?
 				};
 
@@ -1380,21 +1380,21 @@ impl<Block, Client, Inner> BlockImport<Block> for BabeBlockImport<Block, Client,
 				(false, false, true) => {
 					return Err(
 						ConsensusError::ClientImport(
-							babe_err(Error::<Block>::UnexpectedConfigChange).into(),
+                            poc_err(Error::<Block>::UnexpectedConfigChange).into(),
 						)
 					)
 				},
 				(true, false, _) => {
 					return Err(
 						ConsensusError::ClientImport(
-							babe_err(Error::<Block>::ExpectedEpochChange(hash, slot)).into(),
+                            poc_err(Error::<Block>::ExpectedEpochChange(hash, slot)).into(),
 						)
 					)
 				},
 				(false, true, _) => {
 					return Err(
 						ConsensusError::ClientImport(
-							babe_err(Error::<Block>::UnexpectedEpochChange).into(),
+                            poc_err(Error::<Block>::UnexpectedEpochChange).into(),
 						)
 					)
 				},

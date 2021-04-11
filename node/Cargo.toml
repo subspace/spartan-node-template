@@ -23,20 +23,20 @@ jsonrpc-core = '15.1.0'
 structopt = '0.3.8'
 
 # Substrate dependencies
-frame-benchmarking = '3.1.0'
-frame-benchmarking-cli = '3.0.0'
+frame-benchmarking = { version = '3.1.0', path = "../../substrate/frame/benchmarking" }
+frame-benchmarking-cli = { version = '3.0.0', path = "../../substrate/utils/frame/benchmarking-cli" }
 pallet-transaction-payment-rpc = '3.0.0'
-sc-basic-authorship = '0.9.0'
-sc-cli = { features = ['wasmtime'], version = '0.9.0' }
-sc-client-api = '3.0.0'
-sc-consensus = '0.9.0'
-sc-consensus-aura = '0.9.0'
-sc-executor = { features = ['wasmtime'], version = '0.9.0' }
-sc-finality-grandpa = '0.9.0'
+sc-basic-authorship = { version = '0.9.0', path = "../../substrate/client/basic-authorship" }
+sc-cli = { features = ['wasmtime'], version = '0.9.0', path = "../../substrate/client/cli" }
+sc-client-api = { version = '3.0.0', path = "../../substrate/client/api" }
+sc-consensus = { version = "0.9.0", path = "../../substrate/client/consensus/common" }
+sc-consensus-aura = { version = '0.9.0', path = "../../substrate/client/consensus/aura" }
+sc-executor = { features = ['wasmtime'], version = '0.9.0', path = "../../substrate/client/executor" }
+sc-finality-grandpa = { version = '0.9.0', path = "../../substrate/client/finality-grandpa" }
 sc-keystore = '3.0.0'
 sc-rpc = '3.0.0'
 sc-rpc-api = '0.9.0'
-sc-service = { features = ['wasmtime'], version = '0.9.0' }
+sc-service = { features = ['wasmtime'], version = '0.9.0', path = "../../substrate/client/service" }
 sc-telemetry = '3.0.0'
 sc-transaction-pool = '3.0.0'
 sp-api = '3.0.0'

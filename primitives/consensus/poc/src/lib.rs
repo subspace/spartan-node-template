@@ -43,8 +43,8 @@ pub const KEY_TYPE: sp_core::crypto::KeyTypeId = sp_application_crypto::key_type
 
 // TODO: Add POC to `key_types`
 mod app {
-	use sp_application_crypto::{app_crypto, key_types::BABE, sr25519};
-	app_crypto!(sr25519, BABE);
+	use sp_application_crypto::{app_crypto, key_types::POC, sr25519};
+	app_crypto!(sr25519, POC);
 }
 
 /// The prefix used by PoC for its VRF keys.

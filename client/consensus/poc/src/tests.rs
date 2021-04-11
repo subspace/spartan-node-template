@@ -28,7 +28,7 @@ use sp_keystore::{
 	SyncCryptoStore,
 	vrf::make_transcript as transcript_from_data,
 };
-use sp_consensus_babe::{AuthorityPair, Slot, AllowedSlots, make_transcript, make_transcript_data};
+use sp_consensus_poc::{AuthorityPair, Slot, AllowedSlots, make_transcript, make_transcript_data};
 use sc_consensus_slots::BackoffAuthoringOnFinalizedHeadLagging;
 use sc_block_builder::{BlockBuilder, BlockBuilderProvider};
 use sp_consensus::{

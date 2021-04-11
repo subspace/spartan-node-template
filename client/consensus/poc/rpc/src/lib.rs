@@ -26,7 +26,7 @@ use jsonrpc_core::{
 };
 use jsonrpc_derive::rpc;
 use sc_consensus_epochs::{descendent_query, Epoch as EpochT, SharedEpochChanges};
-use sp_consensus_babe::{
+use sp_consensus_poc::{
 	AuthorityId,
 	BabeApi as BabeRuntimeApi,
 	digests::PreDigest,

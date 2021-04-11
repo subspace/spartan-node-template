@@ -1,6 +1,5 @@
-// This file is part of Substrate.
-
 // Copyright (C) 2019-2021 Parity Technologies (UK) Ltd.
+// Copyright (C) 2021 Subpace Labs, Inc.
 // SPDX-License-Identifier: GPL-3.0-or-later WITH Classpath-exception-2.0
 
 // This program is free software: you can redistribute it and/or modify
@@ -16,21 +15,20 @@
 // You should have received a copy of the GNU General Public License
 // along with this program. If not, see <https://www.gnu.org/licenses/>.
 
-//! Verification for BABE headers.
+//! Verification for PoC headers.
 use sp_runtime::{traits::Header, traits::DigestItemFor};
 use sp_core::{Pair, Public};
-use sp_consensus_babe::{make_transcript, AuthoritySignature, AuthorityPair, AuthorityId};
-use sp_consensus_babe::digests::{
-	PreDigest, PrimaryPreDigest, SecondaryPlainPreDigest, SecondaryVRFPreDigest,
-	CompatibleDigestItem
+use sp_consensus_poc::{make_transcript, FarmerSignature, FarmerId};
+use sp_consensus_poc::digests::{
+	PreDigest, CompatibleDigestItem
 };
 use sc_consensus_slots::CheckedHeader;
 use sp_consensus_slots::Slot;
 use log::{debug, trace};
-use super::{find_pre_digest, babe_err, Epoch, BlockT, Error};
-use super::authorship::{calculate_primary_threshold, check_primary_threshold, secondary_slot_author};
+use super::{find_pre_digest, poc_err, Epoch, BlockT, Error};
+use super::authorship::{calculate_threshold, check_threshold};
 
-/// BABE verification parameters
+/// PoC verification parameters
 pub(super) struct VerificationParams<'a, B: 'a + BlockT> {
 	/// The header being verified.
 	pub(super) header: B::Header,
@@ -51,10 +49,7 @@ pub(super) struct VerificationParams<'a, B: 'a + BlockT> {
 /// The seal must be the last digest.  Otherwise, the whole header is considered
 /// unsigned.  This is required for security and must not be changed.
 ///
-/// This digest item will always return `Some` when used with `as_babe_pre_digest`.
-///
-/// The given header can either be from a primary or secondary slot assignment,
-/// with each having different validation logic.
+/// This digest item will always return `Some` when used with `as_poc_pre_digest`.
 pub(super) fn check_header<B: BlockT + Sized>(
 	params: VerificationParams<B>,
 ) -> Result<CheckedHeader<B::Header, VerifiedHeaderInfo<B>>, Error<B>> where
@@ -67,17 +62,17 @@ pub(super) fn check_header<B: BlockT + Sized>(
 		epoch,
 	} = params;
 
-	let authorities = &epoch.authorities;
 	let pre_digest = pre_digest.map(Ok).unwrap_or_else(|| find_pre_digest::<B>(&header))?;
 
-	trace!(target: "babe", "Checking header");
+	trace!(target: "poc", "Checking header");
 	let seal = match header.digest_mut().pop() {
 		Some(x) => x,
-		None => return Err(babe_err(Error::HeaderUnsealed(header.hash()))),
+		None => return Err(poc_err(Error::HeaderUnsealed(header.hash()))),
 	};
 
+	// TODO: Probably `as_poc_seal()` here
 	let sig = seal.as_babe_seal().ok_or_else(|| {
-		babe_err(Error::HeaderBadSeal(header.hash()))
+		poc_err(Error::HeaderBadSeal(header.hash()))
 	})?;
 
 	// the pre-hash of the header doesn't include the seal
@@ -89,60 +84,21 @@ pub(super) fn check_header<B: BlockT + Sized>(
 		return Ok(CheckedHeader::Deferred(header, pre_digest.slot()));
 	}
 
-	let author = match authorities.get(pre_digest.authority_index() as usize) {
-		Some(author) => author.0.clone(),
-		None => return Err(babe_err(Error::SlotAuthorNotFound)),
-	};
+	debug!(target: "babe",
+		"Verifying primary block #{} at slot: {}",
+		header.number(),
+		pre_digest.slot,
+	);
 
-	match &pre_digest {
-		PreDigest::Primary(primary) => {
-			debug!(target: "babe",
-				"Verifying primary block #{} at slot: {}",
-				header.number(),
-				primary.slot,
-			);
+	check_primary_header::<B>(
+		pre_hash,
+		&pre_digest,
+		sig,
+		&epoch,
+		epoch.config.c,
+	)?;
 
-			check_primary_header::<B>(
-				pre_hash,
-				primary,
-				sig,
-				&epoch,
-				epoch.config.c,
-			)?;
-		},
-		PreDigest::SecondaryPlain(secondary) if epoch.config.allowed_slots.is_secondary_plain_slots_allowed() => {
-			debug!(target: "babe",
-				"Verifying secondary plain block #{} at slot: {}",
-				header.number(),
-				secondary.slot,
-			);
-
-			check_secondary_plain_header::<B>(
-				pre_hash,
-				secondary,
-				sig,
-				&epoch,
-			)?;
-		},
-		PreDigest::SecondaryVRF(secondary) if epoch.config.allowed_slots.is_secondary_vrf_slots_allowed() => {
-			debug!(target: "babe",
-				"Verifying secondary VRF block #{} at slot: {}",
-				header.number(),
-				secondary.slot,
-			);
-
-			check_secondary_vrf_header::<B>(
-				pre_hash,
-				secondary,
-				sig,
-				&epoch,
-			)?;
-		},
-		_ => {
-			return Err(babe_err(Error::SecondarySlotAssignmentsDisabled));
-		}
-	}
-
+	// TODO: Fix author
 	let info = VerifiedHeaderInfo {
 		pre_digest: CompatibleDigestItem::babe_pre_digest(pre_digest),
 		seal,
@@ -154,7 +110,7 @@ pub(super) fn check_header<B: BlockT + Sized>(
 pub(super) struct VerifiedHeaderInfo<B: BlockT> {
 	pub(super) pre_digest: DigestItemFor<B>,
 	pub(super) seal: DigestItemFor<B>,
-	pub(super) author: AuthorityId,
+	pub(super) author: FarmerId,
 }
 
 /// Check a primary slot proposal header. We validate that the given header is
@@ -181,23 +137,23 @@ fn check_primary_header<B: BlockT + Sized>(
 			schnorrkel::PublicKey::from_bytes(author.as_slice()).and_then(|p| {
 				p.vrf_verify(transcript, &pre_digest.vrf_output, &pre_digest.vrf_proof)
 			}).map_err(|s| {
-				babe_err(Error::VRFVerificationFailed(s))
+				poc_err(Error::VRFVerificationFailed(s))
 			})?
 		};
 
-		let threshold = calculate_primary_threshold(
+		let threshold = calculate_threshold(
 			c,
 			&epoch.authorities,
 			pre_digest.authority_index as usize,
 		);
 
-		if !check_primary_threshold(&inout, threshold) {
-			return Err(babe_err(Error::VRFVerificationOfBlockFailed(author.clone(), threshold)));
+		if !check_threshold(&inout, threshold) {
+			return Err(poc_err(Error::VRFVerificationOfBlockFailed(author.clone(), threshold)));
 		}
 
 		Ok(())
 	} else {
-		Err(babe_err(Error::BadSignature(pre_hash)))
+		Err(poc_err(Error::BadSignature(pre_hash)))
 	}
 }
 
@@ -263,7 +219,7 @@ fn check_secondary_vrf_header<B: BlockT>(
 		schnorrkel::PublicKey::from_bytes(author.as_slice()).and_then(|p| {
 			p.vrf_verify(transcript, &pre_digest.vrf_output, &pre_digest.vrf_proof)
 		}).map_err(|s| {
-			babe_err(Error::VRFVerificationFailed(s))
+			poc_err(Error::VRFVerificationFailed(s))
 		})?;
 
 		Ok(())
