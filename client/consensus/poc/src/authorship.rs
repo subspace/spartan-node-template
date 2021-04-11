@@ -17,20 +17,10 @@
 
 //! PoC farmer selection and slot claiming.
 
-use sp_application_crypto::AppKey;
-use sp_consensus_poc::{
-	POC_VRF_PREFIX, FarmerId, make_transcript, make_transcript_data, Slot,
-};
-use sp_consensus_poc::digests::PreDigest;
-use sp_consensus_vrf::schnorrkel::{VRFOutput, VRFProof};
-use sp_core::{U256, blake2_256, crypto::Public};
-use sp_keystore::{SyncCryptoStorePtr, SyncCryptoStore};
-use codec::Encode;
+use sp_consensus_poc::POC_VRF_PREFIX;
 use schnorrkel::{
-	keys::PublicKey,
 	vrf::VRFInOut,
 };
-use super::Epoch;
 
 /// Calculates the threshold, taking
 /// into account `c` (`1 - c` represents the probability of a slot being empty).

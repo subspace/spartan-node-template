@@ -596,7 +596,7 @@
 //
 // 	let pre_digest = sp_runtime::generic::Digest {
 // 		logs: vec![
-// 			Item::babe_pre_digest(
+// 			Item::poc_pre_digest(
 // 				PreDigest::SecondaryPlain(SecondaryPlainPreDigest {
 // 					authority_index: 0,
 // 					slot,
@@ -622,7 +622,7 @@
 // 		let pair = AuthorityPair::from_seed(&[1; 32]);
 // 		let pre_hash = block.header.hash();
 // 		let signature = pair.sign(pre_hash.as_ref());
-// 		Item::babe_seal(signature)
+// 		Item::poc_seal(signature)
 // 	};
 //
 // 	let post_hash = {

@@ -127,7 +127,7 @@ pub(crate) fn write_block_weight<H: Encode, F, R>(
 pub fn load_block_weight<H: Encode, B: AuxStore>(
 	backend: &B,
 	block_hash: H,
-) -> ClientResult<Option<PoCeBlockWeight>> {
+) -> ClientResult<Option<PoCBlockWeight>> {
 	load_decode(backend, block_weight_key(block_hash).as_slice())
 }
 

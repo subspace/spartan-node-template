@@ -70,8 +70,7 @@ pub(super) fn check_header<B: BlockT + Sized>(
 		None => return Err(poc_err(Error::HeaderUnsealed(header.hash()))),
 	};
 
-	// TODO: Probably `as_poc_seal()` here
-	let sig = seal.as_babe_seal().ok_or_else(|| {
+	let sig = seal.as_poc_seal().ok_or_else(|| {
 		poc_err(Error::HeaderBadSeal(header.hash()))
 	})?;
 
@@ -98,11 +97,11 @@ pub(super) fn check_header<B: BlockT + Sized>(
 		epoch.config.c,
 	)?;
 
-	// TODO: Fix author
 	let info = VerifiedHeaderInfo {
-		pre_digest: CompatibleDigestItem::babe_pre_digest(pre_digest),
+		pre_digest: CompatibleDigestItem::poc_pre_digest(pre_digest),
 		seal,
-		author,
+		// TODO: Fix author
+		author: Default::default(),
 	};
 	Ok(CheckedHeader::Checked(header, info))
 }
@@ -118,112 +117,43 @@ pub(super) struct VerifiedHeaderInfo<B: BlockT> {
 /// is valid. Additionally, the weight of this block must increase compared to
 /// its parent since it is a primary block.
 fn check_primary_header<B: BlockT + Sized>(
-	pre_hash: B::Hash,
-	pre_digest: &PrimaryPreDigest,
-	signature: AuthoritySignature,
-	epoch: &Epoch,
-	c: (u64, u64),
+	_pre_hash: B::Hash,
+	_pre_digest: &PreDigest,
+	_signature: FarmerSignature,
+	_epoch: &Epoch,
+	_c: (u64, u64),
 ) -> Result<(), Error<B>> {
-	let author = &epoch.authorities[pre_digest.authority_index as usize].0;
-
-	if AuthorityPair::verify(&signature, pre_hash, &author) {
-		let (inout, _) = {
-			let transcript = make_transcript(
-				&epoch.randomness,
-				pre_digest.slot,
-				epoch.epoch_index,
-			);
-
-			schnorrkel::PublicKey::from_bytes(author.as_slice()).and_then(|p| {
-				p.vrf_verify(transcript, &pre_digest.vrf_output, &pre_digest.vrf_proof)
-			}).map_err(|s| {
-				poc_err(Error::VRFVerificationFailed(s))
-			})?
-		};
-
-		let threshold = calculate_threshold(
-			c,
-			&epoch.authorities,
-			pre_digest.authority_index as usize,
-		);
-
-		if !check_threshold(&inout, threshold) {
-			return Err(poc_err(Error::VRFVerificationOfBlockFailed(author.clone(), threshold)));
-		}
-
-		Ok(())
-	} else {
-		Err(poc_err(Error::BadSignature(pre_hash)))
-	}
-}
-
-/// Check a secondary slot proposal header. We validate that the given header is
-/// properly signed by the expected authority, which we have a deterministic way
-/// of computing. Additionally, the weight of this block must stay the same
-/// compared to its parent since it is a secondary block.
-fn check_secondary_plain_header<B: BlockT>(
-	pre_hash: B::Hash,
-	pre_digest: &SecondaryPlainPreDigest,
-	signature: AuthoritySignature,
-	epoch: &Epoch,
-) -> Result<(), Error<B>> {
-	// check the signature is valid under the expected authority and
-	// chain state.
-	let expected_author = secondary_slot_author(
-		pre_digest.slot,
-		&epoch.authorities,
-		epoch.randomness,
-	).ok_or_else(|| Error::NoSecondaryAuthorExpected)?;
-
-	let author = &epoch.authorities[pre_digest.authority_index as usize].0;
-
-	if expected_author != author {
-		return Err(Error::InvalidAuthor(expected_author.clone(), author.clone()));
-	}
-
-	if AuthorityPair::verify(&signature, pre_hash.as_ref(), author) {
-		Ok(())
-	} else {
-		Err(Error::BadSignature(pre_hash))
-	}
-}
-
-/// Check a secondary VRF slot proposal header.
-fn check_secondary_vrf_header<B: BlockT>(
-	pre_hash: B::Hash,
-	pre_digest: &SecondaryVRFPreDigest,
-	signature: AuthoritySignature,
-	epoch: &Epoch,
-) -> Result<(), Error<B>> {
-	// check the signature is valid under the expected authority and
-	// chain state.
-	let expected_author = secondary_slot_author(
-		pre_digest.slot,
-		&epoch.authorities,
-		epoch.randomness,
-	).ok_or_else(|| Error::NoSecondaryAuthorExpected)?;
-
-	let author = &epoch.authorities[pre_digest.authority_index as usize].0;
-
-	if expected_author != author {
-		return Err(Error::InvalidAuthor(expected_author.clone(), author.clone()));
-	}
-
-	if AuthorityPair::verify(&signature, pre_hash.as_ref(), author) {
-		let transcript = make_transcript(
-			&epoch.randomness,
-			pre_digest.slot,
-			epoch.epoch_index,
-		);
-
-		schnorrkel::PublicKey::from_bytes(author.as_slice()).and_then(|p| {
-			p.vrf_verify(transcript, &pre_digest.vrf_output, &pre_digest.vrf_proof)
-		}).map_err(|s| {
-			poc_err(Error::VRFVerificationFailed(s))
-		})?;
-
-		Ok(())
-	} else {
-		Err(Error::BadSignature(pre_hash))
-	}
+	// let author = &epoch.authorities[pre_digest.authority_index as usize].0;
+	//
+	// if AuthorityPair::verify(&signature, pre_hash, &author) {
+	// 	let (inout, _) = {
+	// 		let transcript = make_transcript(
+	// 			&epoch.randomness,
+	// 			pre_digest.slot,
+	// 			epoch.epoch_index,
+	// 		);
+	//
+	// 		schnorrkel::PublicKey::from_bytes(author.as_slice()).and_then(|p| {
+	// 			p.vrf_verify(transcript, &pre_digest.vrf_output, &pre_digest.vrf_proof)
+	// 		}).map_err(|s| {
+	// 			poc_err(Error::VRFVerificationFailed(s))
+	// 		})?
+	// 	};
+	//
+	// 	let threshold = calculate_threshold(
+	// 		c,
+	// 		&epoch.authorities,
+	// 		pre_digest.authority_index as usize,
+	// 	);
+	//
+	// 	if !check_threshold(&inout, threshold) {
+	// 		return Err(poc_err(Error::VRFVerificationOfBlockFailed(author.clone(), threshold)));
+	// 	}
+	//
+	// 	Ok(())
+	// } else {
+	// 	Err(poc_err(Error::BadSignature(pre_hash)))
+	// }
+	// TODO: Proper verification
+	Ok(())
 }

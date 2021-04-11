@@ -108,10 +108,7 @@ use retain_mut::RetainMut;
 use futures::prelude::*;
 use log::{debug, info, log, trace, warn};
 use prometheus_endpoint::Registry;
-use sc_consensus_slots::{
-	SlotInfo, SlotCompatible, StorageChanges, CheckedHeader, check_equivocation,
-	BackoffAuthoringBlocksStrategy
-};
+use sc_consensus_slots::{SlotInfo, SlotCompatible, StorageChanges, CheckedHeader, check_equivocation, BackoffAuthoringBlocksStrategy, SimpleSlotWorker};
 use sc_consensus_epochs::{
 	descendent_query, SharedEpochChanges, EpochChangesFor, Epoch as EpochT, ViableEpochDescriptor,
 };
@@ -696,7 +693,7 @@ where
 		claim: &Self::Claim,
 	) -> Vec<sp_runtime::DigestItem<B::Hash>> {
 		vec![
-			<DigestItemFor<B> as CompatibleDigestItem>::babe_pre_digest(claim.0.clone()),
+			<DigestItemFor<B> as CompatibleDigestItem>::poc_pre_digest(claim.0.clone()),
 		]
 	}
 
@@ -730,11 +727,11 @@ where
 			.ok_or_else(|| sp_consensus::Error::CannotSign(
 				public.clone(), "Could not find key in keystore.".into(),
 			))?;
-			let signature: AuthoritySignature = signature.clone().try_into()
+			let signature: FarmerSignature = signature.clone().try_into()
 				.map_err(|_| sp_consensus::Error::InvalidSignature(
 					signature, public
 				))?;
-			let digest_item = <DigestItemFor<B> as CompatibleDigestItem>::babe_seal(signature.into());
+			let digest_item = <DigestItemFor<B> as CompatibleDigestItem>::poc_seal(signature.into());
 
 			let mut import_block = BlockImportParams::new(BlockOrigin::Own, header);
 			import_block.post_digests.push(digest_item);
@@ -821,6 +818,10 @@ where
 		} else {
 			slot_remaining
 		}
+	}
+
+	fn authorities_len(&self, _epoch_data: &Self::EpochData) -> Option<usize> {
+		None
 	}
 }
 
