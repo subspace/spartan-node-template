@@ -37,11 +37,9 @@ use sp_std::vec::Vec;
 
 use crate::digests::{NextConfigDescriptor, NextEpochDescriptor};
 
-// TODO: Add POC to `key_types`
 /// Key type for PoC module.
-pub const KEY_TYPE: sp_core::crypto::KeyTypeId = sp_application_crypto::key_types::BABE;
+pub const KEY_TYPE: sp_core::crypto::KeyTypeId = sp_application_crypto::key_types::POC;
 
-// TODO: Add POC to `key_types`
 mod app {
 	use sp_application_crypto::{app_crypto, key_types::POC, sr25519};
 	app_crypto!(sr25519, POC);

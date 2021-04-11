@@ -248,6 +248,9 @@ pub enum Error<B: BlockT> {
 	/// Unexpected epoch change
 	#[display(fmt = "Unexpected epoch change")]
 	UnexpectedEpochChange,
+	/// Parent block has no associated weight
+	#[display(fmt = "Parent block of {} has no associated weight", _0)]
+	ParentBlockNoAssociatedWeight(B::Hash),
 	#[display(fmt = "Checking inherents failed: {}", _0)]
 	/// Check Inherents error
 	CheckInherents(String),
@@ -753,7 +756,7 @@ where
 	fn should_backoff(&self, slot: Slot, chain_head: &B::Header) -> bool {
 		if let Some(ref strategy) = self.backoff_authoring_blocks {
 			if let Ok(chain_head_slot) = find_pre_digest::<B>(chain_head)
-				.map(|digest| digest.slot())
+				.map(|digest| digest.slot)
 			{
 				return strategy.should_backoff(
 					*chain_head.number(),
@@ -801,7 +804,7 @@ where
 
 		let parent_slot = match find_pre_digest::<B>(parent_head) {
 			Err(_) => return slot_remaining,
-			Ok(d) => d.slot(),
+			Ok(d) => d.slot,
 		};
 
 		if let Some(slot_lenience) =
@@ -832,7 +835,7 @@ pub fn find_pre_digest<B: BlockT>(header: &B::Header) -> Result<PreDigest, Error
 	// dummy one to not break any invariants in the rest of the code
 	if header.number().is_zero() {
 		// TODO: Deal with this later
-		return Err(poc_err(Err(Error::NoPreRuntimeDigest)));
+		return Err(poc_err(Error::NoPreRuntimeDigest));
 		// return Ok(PreDigest::SecondaryPlain(SecondaryPlainPreDigest {
 		// 	slot: 0.into(),
 		// 	authority_index: 0,
@@ -842,8 +845,7 @@ pub fn find_pre_digest<B: BlockT>(header: &B::Header) -> Result<PreDigest, Error
 	let mut pre_digest: Option<_> = None;
 	for log in header.digest().logs() {
 		trace!(target: "poc", "Checking log {:?}, looking for pre runtime digest", log);
-		// TODO: Add `as_poc_pre_digest()` probably
-		match (log.as_babe_pre_digest(), pre_digest.is_some()) {
+		match (log.as_poc_pre_digest(), pre_digest.is_some()) {
 			(Some(_), true) => return Err(poc_err(Error::MultiplePreRuntimeDigests)),
 			(None, _) => trace!(target: "poc", "Ignoring digest not meant for us"),
 			(s, false) => pre_digest = s,
@@ -900,8 +902,7 @@ impl SlotCompatible for TimeSource {
 	) -> Result<(sp_timestamp::Timestamp, Slot, std::time::Duration), sp_consensus::Error> {
 		trace!(target: "poc", "extract timestamp");
 		data.timestamp_inherent_data()
-			// TODO: `poc_inherent_data()`
-			.and_then(|t| data.babe_inherent_data().map(|a| (t, a)))
+			.and_then(|t| data.poc_inherent_data().map(|a| (t, a)))
 			.map_err(Into::into)
 			.map_err(sp_consensus::Error::InherentData)
 			.map(|(x, y)| (x, y, self.0.lock().0.take().unwrap_or_default()))
@@ -1111,7 +1112,7 @@ where
 			descendent_query(&*self.client),
 			&parent_hash,
 			parent_header_metadata.number,
-			pre_digest.slot(),
+			pre_digest.slot,
 		)
 			.map_err(|e| Error::<Block>::ForkTree(Box::new(e)))?
 			.ok_or_else(|| Error::<Block>::FetchEpoch(parent_hash))?;
@@ -1131,10 +1132,9 @@ where
 
 		match verification::check_header::<Block>(v_params)? {
 			CheckedHeader::Checked(pre_header, verified_info) => {
-				// TODO: `as_poc_pre_digest()`
-				let poc_pre_digest = verified_info.pre_digest.as_babe_pre_digest()
+				let poc_pre_digest = verified_info.pre_digest.as_poc_pre_digest()
 					.expect("check_header always returns a pre-digest digest item; qed");
-				let slot = poc_pre_digest.slot();
+				let slot = poc_pre_digest.slot;
 
 				// the header is valid but let's check if there was something else already
 				// proposed at the same slot by the given author. if there was, we will
@@ -1153,8 +1153,7 @@ where
 				// to check that the internally-set timestamp in the inherents
 				// actually matches the slot set in the seal.
 				if let Some(inner_body) = body.take() {
-					// TODO: `poc_replace_inherent_data()`
-					inherent_data.babe_replace_inherent_data(slot);
+					inherent_data.poc_replace_inherent_data(slot);
 					let block = Block::new(pre_header.clone(), inner_body);
 
 					self.check_inherents(
@@ -1290,7 +1289,7 @@ impl<Block, Client, Inner> BlockImport<Block> for PoCBlockImport<Block, Client, 
 		let pre_digest = find_pre_digest::<Block>(&block.header)
 			.expect("valid PoC headers must contain a predigest; \
 					 header has been already verified; qed");
-		let slot = pre_digest.slot();
+		let slot = pre_digest.slot;
 
 		let parent_hash = *block.header.parent_hash();
 		let parent_header = self.client.header(BlockId::Hash(parent_hash))
@@ -1300,7 +1299,7 @@ impl<Block, Client, Inner> BlockImport<Block> for PoCBlockImport<Block, Client, 
 			).into()))?;
 
 		let parent_slot = find_pre_digest::<Block>(&parent_header)
-			.map(|d| d.slot())
+			.map(|d| d.slot)
 			.expect("parent is non-genesis; valid PoC headers contain a pre-digest; \
 					header has already been verified; qed");
 
@@ -1540,7 +1539,7 @@ fn prune_finalized<Block, Client>(
 		find_pre_digest::<Block>(&finalized_header)
 			.expect("finalized header must be valid; \
 					 valid blocks have a pre-digest; qed")
-			.slot()
+			.slot
 	};
 
 	epoch_changes.prune_finalized(

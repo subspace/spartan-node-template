@@ -98,7 +98,7 @@
 //
 // 		let parent_slot = crate::find_pre_digest::<TestBlock>(parent_header)
 // 			.expect("parent header has a pre-digest")
-// 			.slot();
+// 			.slot;
 //
 // 		future::ready(Ok(DummyProposer {
 // 			factory: self.clone(),
@@ -135,7 +135,7 @@
 //
 // 		let this_slot = crate::find_pre_digest::<TestBlock>(block.header())
 // 			.expect("baked block has valid pre-digest")
-// 			.slot();
+// 			.slot;
 //
 // 		// figure out if we should add a consensus digest, since the test runtime
 // 		// doesn't.
@@ -591,7 +591,7 @@
 //
 // 	let slot = slot.unwrap_or_else(|| {
 // 		let parent_pre_digest = find_pre_digest::<TestBlock>(parent).unwrap();
-// 		parent_pre_digest.slot() + 1
+// 		parent_pre_digest.slot + 1
 // 	});
 //
 // 	let pre_digest = sp_runtime::generic::Digest {

@@ -78,9 +78,9 @@ pub(super) fn check_header<B: BlockT + Sized>(
 	// and that's what we sign
 	let pre_hash = header.hash();
 
-	if pre_digest.slot() > slot_now {
+	if pre_digest.slot > slot_now {
 		header.digest_mut().push(seal);
-		return Ok(CheckedHeader::Deferred(header, pre_digest.slot()));
+		return Ok(CheckedHeader::Deferred(header, pre_digest.slot));
 	}
 
 	debug!(target: "babe",
