@@ -1,6 +1,5 @@
-// This file is part of Substrate.
-
 // Copyright (C) 2019-2021 Parity Technologies (UK) Ltd.
+// Copyright (C) 2021 Subpace Labs, Inc.
 // SPDX-License-Identifier: Apache-2.0
 
 // Licensed under the Apache License, Version 2.0 (the "License");
@@ -15,7 +14,7 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-//! Primitives for BABE.
+//! Primitives for PoC.
 #![deny(warnings)]
 #![forbid(unsafe_code, missing_docs, unused_variables, unused_imports)]
 #![cfg_attr(not(feature = "std"), no_std)]
@@ -38,34 +37,31 @@ use sp_std::vec::Vec;
 
 use crate::digests::{NextConfigDescriptor, NextEpochDescriptor};
 
-/// Key type for BABE module.
+// TODO: Add POC to `key_types`
+/// Key type for PoC module.
 pub const KEY_TYPE: sp_core::crypto::KeyTypeId = sp_application_crypto::key_types::BABE;
 
+// TODO: Add POC to `key_types`
 mod app {
 	use sp_application_crypto::{app_crypto, key_types::BABE, sr25519};
 	app_crypto!(sr25519, BABE);
 }
 
-/// The prefix used by BABE for its VRF keys.
-pub const BABE_VRF_PREFIX: &[u8] = b"substrate-babe-vrf";
+/// The prefix used by PoC for its VRF keys.
+pub const POC_VRF_PREFIX: &[u8] = b"substrate-poc-vrf";
 
-/// BABE VRFInOut context.
-pub static BABE_VRF_INOUT_CONTEXT: &[u8] = b"BabeVRFInOutContext";
+/// PoC VRFInOut context.
+pub static POC_VRF_INOUT_CONTEXT: &[u8] = b"PoCVRFInOutContext";
 
-/// A Babe authority keypair. Necessarily equivalent to the schnorrkel public key used in
-/// the main Babe module. If that ever changes, then this must, too.
-#[cfg(feature = "std")]
-pub type AuthorityPair = app::Pair;
+/// A PoC farmer signature.
+pub type FarmerSignature = app::Signature;
 
-/// A Babe authority signature.
-pub type AuthoritySignature = app::Signature;
+/// A PoC farmer identifier. Necessarily equivalent to the schnorrkel public key used in
+/// the main PoC module. If that ever changes, then this must, too.
+pub type FarmerId = app::Public;
 
-/// A Babe authority identifier. Necessarily equivalent to the schnorrkel public key used in
-/// the main Babe module. If that ever changes, then this must, too.
-pub type AuthorityId = app::Public;
-
-/// The `ConsensusEngineId` of BABE.
-pub const BABE_ENGINE_ID: ConsensusEngineId = *b"BABE";
+/// The `ConsensusEngineId` of PoC.
+pub const POC_ENGINE_ID: ConsensusEngineId = *b"POC0";
 
 /// The length of the public key
 pub const PUBLIC_KEY_LENGTH: usize = 32;
@@ -75,21 +71,13 @@ pub const PUBLIC_KEY_LENGTH: usize = 32;
 /// or epoch length.
 pub const MEDIAN_ALGORITHM_CARDINALITY: usize = 1200; // arbitrary suggestion by w3f-research.
 
-/// The index of an authority.
-pub type AuthorityIndex = u32;
-
 pub use sp_consensus_slots::Slot;
 
 /// An equivocation proof for multiple block authorships on the same slot (i.e. double vote).
-pub type EquivocationProof<H> = sp_consensus_slots::EquivocationProof<H, AuthorityId>;
+pub type EquivocationProof<H> = sp_consensus_slots::EquivocationProof<H, FarmerId>;
 
-/// The weight of an authority.
-// NOTE: we use a unique name for the weight to avoid conflicts with other
-//       `Weight` types, since the metadata isn't able to disambiguate.
-pub type BabeAuthorityWeight = u64;
-
-/// The weight of a BABE block.
-pub type BabeBlockWeight = u32;
+/// The weight of a PoC block.
+pub type PoCBlockWeight = u32;
 
 /// Make a VRF transcript from given randomness, slot number and epoch.
 pub fn make_transcript(
@@ -97,7 +85,7 @@ pub fn make_transcript(
 	slot: Slot,
 	epoch: u64,
 ) -> Transcript {
-	let mut transcript = Transcript::new(&BABE_ENGINE_ID);
+	let mut transcript = Transcript::new(&POC_ENGINE_ID);
 	transcript.append_u64(b"slot number", *slot);
 	transcript.append_u64(b"current epoch", epoch);
 	transcript.append_message(b"chain randomness", &randomness[..]);
@@ -112,7 +100,7 @@ pub fn make_transcript_data(
 	epoch: u64,
 ) -> VRFTranscriptData {
 	VRFTranscriptData {
-		label: &BABE_ENGINE_ID,
+		label: &POC_ENGINE_ID,
 		items: vec![
 			("slot number", VRFTranscriptValue::U64(*slot)),
 			("current epoch", VRFTranscriptValue::U64(epoch)),
@@ -129,19 +117,16 @@ pub enum ConsensusLog {
 	/// entered) should already be available earlier in the chain.
 	#[codec(index = 1)]
 	NextEpochData(NextEpochDescriptor),
-	/// Disable the authority with given index.
-	#[codec(index = 2)]
-	OnDisabled(AuthorityIndex),
 	/// The epoch has changed, and the epoch after the current one will
 	/// enact different epoch configurations.
-	#[codec(index = 3)]
+	#[codec(index = 2)]
 	NextConfigData(NextConfigDescriptor),
 }
 
-/// Configuration data used by the BABE consensus engine.
+/// Configuration data used by the PoC consensus engine.
 #[derive(Clone, PartialEq, Eq, Encode, Decode, RuntimeDebug)]
-pub struct BabeGenesisConfigurationV1 {
-	/// The slot duration in milliseconds for BABE. Currently, only
+pub struct PoCGenesisConfigurationV1 {
+	/// The slot duration in milliseconds for PoC. Currently, only
 	/// the value provided by this type at genesis will be used.
 	///
 	/// Dynamic slot duration may be supported in the future.
@@ -158,38 +143,25 @@ pub struct BabeGenesisConfigurationV1 {
 	/// of a slot being empty.
 	pub c: (u64, u64),
 
-	/// The authorities for the genesis epoch.
-	pub genesis_authorities: Vec<(AuthorityId, BabeAuthorityWeight)>,
-
 	/// The randomness for the genesis epoch.
 	pub randomness: Randomness,
-
-	/// Whether this chain should run with secondary slots, which are assigned
-	/// in round-robin manner.
-	pub secondary_slots: bool,
 }
 
-impl From<BabeGenesisConfigurationV1> for BabeGenesisConfiguration {
-	fn from(v1: BabeGenesisConfigurationV1) -> Self {
+impl From<PoCGenesisConfigurationV1> for PoCGenesisConfiguration {
+	fn from(v1: PoCGenesisConfigurationV1) -> Self {
 		Self {
 			slot_duration: v1.slot_duration,
 			epoch_length: v1.epoch_length,
 			c: v1.c,
-			genesis_authorities: v1.genesis_authorities,
 			randomness: v1.randomness,
-			allowed_slots: if v1.secondary_slots {
-				AllowedSlots::PrimaryAndSecondaryPlainSlots
-			} else {
-				AllowedSlots::PrimarySlots
-			},
 		}
 	}
 }
 
-/// Configuration data used by the BABE consensus engine.
+/// Configuration data used by the PoC consensus engine.
 #[derive(Clone, PartialEq, Eq, Encode, Decode, RuntimeDebug)]
-pub struct BabeGenesisConfiguration {
-	/// The slot duration in milliseconds for BABE. Currently, only
+pub struct PoCGenesisConfiguration {
+	/// The slot duration in milliseconds for PoC. Currently, only
 	/// the value provided by this type at genesis will be used.
 	///
 	/// Dynamic slot duration may be supported in the future.
@@ -206,53 +178,23 @@ pub struct BabeGenesisConfiguration {
 	/// of a slot being empty.
 	pub c: (u64, u64),
 
-	/// The authorities for the genesis epoch.
-	pub genesis_authorities: Vec<(AuthorityId, BabeAuthorityWeight)>,
-
 	/// The randomness for the genesis epoch.
 	pub randomness: Randomness,
-
-	/// Type of allowed slots.
-	pub allowed_slots: AllowedSlots,
-}
-
-/// Types of allowed slots.
-#[derive(Clone, Copy, PartialEq, Eq, Encode, Decode, RuntimeDebug)]
-#[cfg_attr(feature = "std", derive(Serialize, Deserialize))]
-pub enum AllowedSlots {
-	/// Only allow primary slots.
-	PrimarySlots,
-	/// Allow primary and secondary plain slots.
-	PrimaryAndSecondaryPlainSlots,
-	/// Allow primary and secondary VRF slots.
-	PrimaryAndSecondaryVRFSlots,
-}
-
-impl AllowedSlots {
-	/// Whether plain secondary slots are allowed.
-	pub fn is_secondary_plain_slots_allowed(&self) -> bool {
-		*self == Self::PrimaryAndSecondaryPlainSlots
-	}
-
-	/// Whether VRF secondary slots are allowed.
-	pub fn is_secondary_vrf_slots_allowed(&self) -> bool {
-		*self == Self::PrimaryAndSecondaryVRFSlots
-	}
 }
 
 #[cfg(feature = "std")]
-impl sp_consensus::SlotData for BabeGenesisConfiguration {
+impl sp_consensus::SlotData for PoCGenesisConfiguration {
 	fn slot_duration(&self) -> std::time::Duration {
 		std::time::Duration::from_millis(self.slot_duration)
 	}
 
-	const SLOT_KEY: &'static [u8] = b"babe_configuration";
+	const SLOT_KEY: &'static [u8] = b"poc_configuration";
 }
 
-/// Configuration data used by the BABE consensus engine.
+/// Configuration data used by the PoC consensus engine.
 #[derive(Clone, PartialEq, Eq, Encode, Decode, RuntimeDebug)]
 #[cfg_attr(feature = "std", derive(Serialize, Deserialize))]
-pub struct BabeEpochConfiguration {
+pub struct PoCEpochConfiguration {
 	/// A constant value that is used in the threshold calculation formula.
 	/// Expressed as a rational where the first member of the tuple is the
 	/// numerator and the second is the denominator. The rational should
@@ -260,14 +202,10 @@ pub struct BabeEpochConfiguration {
 	/// In the threshold formula calculation, `1 - c` represents the probability
 	/// of a slot being empty.
 	pub c: (u64, u64),
-
-	/// Whether this chain should run with secondary slots, which are assigned
-	/// in round-robin manner.
-	pub allowed_slots: AllowedSlots,
 }
 
 /// Verifies the equivocation proof by making sure that: both headers have
-/// different hashes, are targetting the same slot, and have valid signatures by
+/// different hashes, are targeting the same slot, and have valid signatures by
 /// the same authority.
 pub fn check_equivocation_proof<H>(proof: EquivocationProof<H>) -> bool
 where
@@ -281,11 +219,11 @@ where
 			.digest()
 			.logs()
 			.iter()
-			.find_map(|log| log.as_babe_pre_digest())
+			.find_map(|log| log.as_poc_pre_digest())
 	};
 
-	let verify_seal_signature = |mut header: H, offender: &AuthorityId| {
-		let seal = header.digest_mut().pop()?.as_babe_seal()?;
+	let verify_seal_signature = |mut header: H, offender: &FarmerId| {
+		let seal = header.digest_mut().pop()?.as_poc_seal()?;
 		let pre_hash = header.hash();
 
 		if !offender.verify(&pre_hash.as_ref(), &seal) {
@@ -304,20 +242,21 @@ where
 		let first_pre_digest = find_pre_digest(&proof.first_header)?;
 		let second_pre_digest = find_pre_digest(&proof.second_header)?;
 
-		// both headers must be targetting the same slot and it must
+		// both headers must be targeting the same slot and it must
 		// be the same as the one in the proof.
-		if proof.slot != first_pre_digest.slot() ||
-			first_pre_digest.slot() != second_pre_digest.slot()
+		if proof.slot != first_pre_digest.slot ||
+			first_pre_digest.slot != second_pre_digest.slot
 		{
 			return None;
 		}
 
-		// both headers must have been authored by the same authority
-		if first_pre_digest.authority_index() != second_pre_digest.authority_index() {
-			return None;
-		}
+		// TODO: Replace with FarmerId
+		// // both headers must have been authored by the same authority
+		// if first_pre_digest.authority_index() != second_pre_digest.authority_index() {
+		// 	return None;
+		// }
 
-		// we finally verify that the expected authority has signed both headers and
+		// we finally verify that the expected farmer has signed both headers and
 		// that the signature is valid.
 		verify_seal_signature(proof.first_header, &proof.offender)?;
 		verify_seal_signature(proof.second_header, &proof.offender)?;
@@ -353,7 +292,7 @@ impl OpaqueKeyOwnershipProof {
 	}
 }
 
-/// BABE epoch information
+/// PoC epoch information
 #[derive(Decode, Encode, PartialEq, Eq, Clone, Debug)]
 pub struct Epoch {
 	/// The epoch index.
@@ -362,24 +301,22 @@ pub struct Epoch {
 	pub start_slot: Slot,
 	/// The duration of this epoch.
 	pub duration: u64,
-	/// The authorities and their weights.
-	pub authorities: Vec<(AuthorityId, BabeAuthorityWeight)>,
 	/// Randomness for this epoch.
 	pub randomness: [u8; VRF_OUTPUT_LENGTH],
 	/// Configuration of the epoch.
-	pub config: BabeEpochConfiguration,
+	pub config: PoCEpochConfiguration,
 }
 
 sp_api::decl_runtime_apis! {
-	/// API necessary for block authorship with BABE.
+	/// API necessary for block authorship with PoC.
 	#[api_version(2)]
-	pub trait BabeApi {
-		/// Return the genesis configuration for BABE. The configuration is only read on genesis.
-		fn configuration() -> BabeGenesisConfiguration;
+	pub trait PoCApi {
+		/// Return the genesis configuration for PoC. The configuration is only read on genesis.
+		fn configuration() -> PoCGenesisConfiguration;
 
-		/// Return the configuration for BABE. Version 1.
+		/// Return the configuration for PoC. Version 1.
 		#[changed_in(2)]
-		fn configuration() -> BabeGenesisConfigurationV1;
+		fn configuration() -> PoCGenesisConfigurationV1;
 
 		/// Returns the slot that started the current epoch.
 		fn current_epoch_start() -> Slot;
@@ -393,8 +330,8 @@ sp_api::decl_runtime_apis! {
 
 		/// Generates a proof of key ownership for the given authority in the
 		/// current epoch. An example usage of this module is coupled with the
-		/// session historical module to prove that a given authority key is
-		/// tied to a given staking identity during a specific session. Proofs
+		/// session historical module to prove that a given farmer key is
+		/// tied to a given given plot during a specific session. Proofs
 		/// of key ownership are necessary for submitting equivocation reports.
 		/// NOTE: even though the API takes a `slot` as parameter the current
 		/// implementations ignores this parameter and instead relies on this
@@ -404,7 +341,7 @@ sp_api::decl_runtime_apis! {
 		/// worker, not requiring older states to be available.
 		fn generate_key_ownership_proof(
 			slot: Slot,
-			authority_id: AuthorityId,
+			farmer_id: FarmerId,
 		) -> Option<OpaqueKeyOwnershipProof>;
 
 		/// Submits an unsigned extrinsic to report an equivocation. The caller

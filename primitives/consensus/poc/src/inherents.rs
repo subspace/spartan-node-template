@@ -1,6 +1,5 @@
-// This file is part of Substrate.
-
 // Copyright (C) 2019-2021 Parity Technologies (UK) Ltd.
+// Copyright (C) 2021 Subpace Labs, Inc.
 // SPDX-License-Identifier: Apache-2.0
 
 // Licensed under the Apache License, Version 2.0 (the "License");
@@ -15,7 +14,7 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-//! Inherents for BABE
+//! Inherents for PoC
 
 use sp_inherents::{Error, InherentData, InherentIdentifier};
 #[cfg(feature = "std")]
@@ -27,31 +26,31 @@ use sp_timestamp::TimestampInherentData;
 use codec::Decode;
 use sp_std::result::Result;
 
-/// The BABE inherent identifier.
-pub const INHERENT_IDENTIFIER: InherentIdentifier = *b"babeslot";
+/// The PoC inherent identifier.
+pub const INHERENT_IDENTIFIER: InherentIdentifier = *b"poc0slot";
 
-/// The type of the BABE inherent.
+/// The type of the PoC inherent.
 pub type InherentType = sp_consensus_slots::Slot;
-/// Auxiliary trait to extract BABE inherent data.
-pub trait BabeInherentData {
-	/// Get BABE inherent data.
-	fn babe_inherent_data(&self) -> Result<InherentType, Error>;
-	/// Replace BABE inherent data.
-	fn babe_replace_inherent_data(&mut self, new: InherentType);
+/// Auxiliary trait to extract PoC inherent data.
+pub trait PoCInherentData {
+	/// Get PoC inherent data.
+	fn poc_inherent_data(&self) -> Result<InherentType, Error>;
+	/// Replace PoC inherent data.
+	fn poc_replace_inherent_data(&mut self, new: InherentType);
 }
 
-impl BabeInherentData for InherentData {
-	fn babe_inherent_data(&self) -> Result<InherentType, Error> {
+impl PoCInherentData for InherentData {
+	fn poc_inherent_data(&self) -> Result<InherentType, Error> {
 		self.get_data(&INHERENT_IDENTIFIER)
-			.and_then(|r| r.ok_or_else(|| "BABE inherent data not found".into()))
+			.and_then(|r| r.ok_or_else(|| "PoC inherent data not found".into()))
 	}
 
-	fn babe_replace_inherent_data(&mut self, new: InherentType) {
+	fn poc_replace_inherent_data(&mut self, new: InherentType) {
 		self.replace_data(INHERENT_IDENTIFIER, &new);
 	}
 }
 
-/// Provides the slot duration inherent data for BABE.
+/// Provides the slot duration inherent data for PoC.
 // TODO: Remove in the future. https://github.com/paritytech/substrate/issues/8029
 #[cfg(feature = "std")]
 pub struct InherentDataProvider {
