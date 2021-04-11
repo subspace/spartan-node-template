@@ -1,6 +1,5 @@
-// This file is part of Substrate.
-
 // Copyright (C) 2020-2021 Parity Technologies (UK) Ltd.
+// Copyright (C) 2021 Subpace Labs, Inc.
 // SPDX-License-Identifier: GPL-3.0-or-later WITH Classpath-exception-2.0
 
 // This program is free software: you can redistribute it and/or modify
@@ -16,9 +15,33 @@
 // You should have received a copy of the GNU General Public License
 // along with this program. If not, see <https://www.gnu.org/licenses/>.
 
-//! RPC api for babe.
+//! RPC api for PoC.
 
-use sc_consensus_babe::{SlotNumber, NewSlotNotifier, NewSlotInfo};
+// TODO: Import these 3 from `sc_consensus_poc` instead
+/// Information about new slot that just arrived
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct NewSlotInfo {
+	/// Slot number
+	pub slot_number: Slot,
+	/// Slot challenge
+	pub challenge: [u8; 8],
+	/// Acceptable solution range
+	pub solution_range: u64,
+}
+/// A function that can be called whenever it is necessary to create a subscription for new slots
+pub type NewSlotNotifier = std::sync::Arc<Box<dyn (Fn() -> std::sync::mpsc::Receiver<
+	(NewSlotInfo, std::sync::mpsc::SyncSender<Option<Solution>>)
+>) + Send + Sync>>;
+#[derive(Clone)]
+pub struct Solution {
+	pub public_key: FarmerId,
+	pub nonce: u64,
+	pub encoding: Vec<u8>,
+	pub signature: Vec<u8>,
+	pub tag: [u8; 8],
+}
+
+//use sc_consensus_poc::{NewSlotNotifier, NewSlotInfo};
 use futures::{FutureExt as _, TryFutureExt as _, SinkExt, TryStreamExt, StreamExt};
 use jsonrpc_core::{
 	Error as RpcError,
@@ -34,7 +57,7 @@ use jsonrpc_core::{
 };
 use jsonrpc_derive::rpc;
 use jsonrpc_pubsub::{typed::Subscriber, SubscriptionId, manager::SubscriptionManager};
-use sp_consensus_babe::AuthorityId;
+use sp_consensus_poc::FarmerId;
 use serde::{Deserialize, Serialize};
 use sp_core::crypto::Public;
 use std::{collections::HashMap, sync::Arc};
@@ -48,10 +71,11 @@ use std::time::Duration;
 
 const SOLUTION_TIMEOUT: Duration = Duration::from_secs(5);
 
+type Slot = u64;
 type FutureResult<T> = Box<dyn rpc_future::Future<Item = T, Error = RpcError> + Send>;
 
 #[derive(Debug, Serialize, Deserialize)]
-pub struct Solution {
+pub struct RpcSolution {
 	pub public_key: [u8; 32],
 	pub nonce: u64,
 	pub encoding: Vec<u8>,
@@ -61,26 +85,26 @@ pub struct Solution {
 
 #[derive(Debug, Serialize, Deserialize)]
 pub struct ProposedProofOfSpaceResult {
-	slot_number: SlotNumber,
-	solution: Option<Solution>,
+	slot_number: Slot,
+	solution: Option<RpcSolution>,
 }
 
-/// Provides rpc methods for interacting with Babe.
+/// Provides rpc methods for interacting with PoC.
 #[rpc]
-pub trait BabeApi {
+pub trait PoCApi {
 	/// RPC metadata
 	type Metadata;
 
-	#[rpc(name = "babe_proposeProofOfSpace")]
+	#[rpc(name = "poc_proposeProofOfSpace")]
 	fn propose_proof_of_space(&self, proposed_proof_of_space_result: ProposedProofOfSpaceResult) -> FutureResult<()>;
 
 
 	/// Slot info subscription
-	#[pubsub(subscription = "babe_slot_info", subscribe, name = "babe_subscribeSlotInfo")]
+	#[pubsub(subscription = "poc_slot_info", subscribe, name = "poc_subscribeSlotInfo")]
 	fn subscribe_slot_info(&self, metadata: Self::Metadata, subscriber: Subscriber<NewSlotInfo>);
 
 	/// Unsubscribe from slot info subscription.
-	#[pubsub(subscription = "babe_slot_info", unsubscribe, name = "babe_unsubscribeSlotInfo")]
+	#[pubsub(subscription = "poc_slot_info", unsubscribe, name = "poc_unsubscribeSlotInfo")]
 	fn unsubscribe_slot_info(
 		&self,
 		metadata: Option<Self::Metadata>,
@@ -88,15 +112,16 @@ pub trait BabeApi {
 	) -> RpcResult<bool>;
 }
 
-/// Implements the BabeRpc trait for interacting with Babe.
-pub struct BabeRpcHandler {
+/// Implements the PoCRpc trait for interacting with PoC.
+pub struct PoCRpcHandler {
 	manager: SubscriptionManager,
 	notification_senders: Arc<Mutex<Vec<UnboundedSender<NewSlotInfo>>>>,
-	solution_senders: Arc<Mutex<HashMap<SlotNumber, futures::channel::mpsc::Sender<Option<Solution>>>>>,
+	solution_senders: Arc<Mutex<HashMap<Slot, futures::channel::mpsc::Sender<Option<RpcSolution>>>>>,
 }
 
-impl BabeRpcHandler {
-	/// Creates a new instance of the BabeRpc handler.
+// TODO: Add more detailed documentation
+impl PoCRpcHandler {
+	/// Creates a new instance of the PoCRpc handler.
 	pub fn new<E>(
 		executor: E,
 		new_slot_notifier: NewSlotNotifier,
@@ -105,14 +130,14 @@ impl BabeRpcHandler {
 			E: Executor01<Box<dyn Future01<Item = (), Error = ()> + Send>> + Send + Sync + 'static,
 	{
 		let notification_senders: Arc<Mutex<Vec<UnboundedSender<NewSlotInfo>>>> = Arc::default();
-		let solution_senders: Arc<Mutex<HashMap<SlotNumber, futures::channel::mpsc::Sender<Option<Solution>>>>> = Arc::default();
+		let solution_senders: Arc<Mutex<HashMap<Slot, futures::channel::mpsc::Sender<Option<RpcSolution>>>>> = Arc::default();
 		std::thread::Builder::new()
-			.name("babe_rpc_nsn_handler".to_string())
+			.name("poc_rpc_nsn_handler".to_string())
 			.spawn({
 				let notification_senders = Arc::clone(&notification_senders);
 				let solution_senders = Arc::clone(&solution_senders);
 				let new_slot_notifier: std::sync::mpsc::Receiver<
-					(NewSlotInfo, mpsc::SyncSender<Option<sp_consensus_babe::digests::Solution>>)
+					(NewSlotInfo, mpsc::SyncSender<Option<Solution>>)
 				> = new_slot_notifier();
 
 				move || {
@@ -142,8 +167,8 @@ impl BabeRpcHandler {
 								let mut potential_solutions_left = expected_solutions_count;
 								while let Some(solution) = solution_receiver.next().await {
 									if let Some(solution) = solution {
-										return Some(sp_consensus_babe::digests::Solution {
-											public_key: AuthorityId::from_slice(&solution.public_key),
+										return Some(Solution {
+											public_key: FarmerId::from_slice(&solution.public_key),
 											nonce: solution.nonce,
 											encoding: solution.encoding,
 											signature: solution.signature,
@@ -173,7 +198,7 @@ impl BabeRpcHandler {
 					}
 				}
 			})
-			.expect("Failed to spawn babe rpc new slot notifier handler");
+			.expect("Failed to spawn poc rpc new slot notifier handler");
 		let manager = SubscriptionManager::new(Arc::new(executor));
 		Self {
 			manager,
@@ -183,7 +208,7 @@ impl BabeRpcHandler {
 	}
 }
 
-impl BabeApi for BabeRpcHandler {
+impl PoCApi for PoCRpcHandler {
 	type Metadata = sc_rpc_api::Metadata;
 
 	fn propose_proof_of_space(&self, proposed_proof_of_space_result: ProposedProofOfSpaceResult) -> FutureResult<()> {
@@ -211,61 +236,5 @@ impl BabeApi for BabeRpcHandler {
 
 	fn unsubscribe_slot_info(&self, _metadata: Option<Self::Metadata>, id: SubscriptionId) -> RpcResult<bool> {
 		Ok(self.manager.cancel(id))
-	}
-}
-
-#[cfg(test)]
-mod tests {
-	use super::*;
-	use substrate_test_runtime_client::{
-		runtime::Block,
-		Backend,
-		DefaultTestClientBuilderExt,
-		TestClient,
-		TestClientBuilderExt,
-		TestClientBuilder,
-	};
-	use sp_application_crypto::AppPair;
-	use sp_keyring::Ed25519Keyring;
-	use sc_keystore::Store;
-
-	use std::sync::Arc;
-	use sc_consensus_babe::{Config, block_import, AuthorityPair};
-	use jsonrpc_core::IoHandler;
-
-	/// creates keystore backed by a temp file
-	fn create_temp_keystore<P: AppPair>(authority: Ed25519Keyring) -> (KeyStorePtr, tempfile::TempDir) {
-		let keystore_path = tempfile::tempdir().expect("Creates keystore path");
-		let keystore = Store::open(keystore_path.path(), None).expect("Creates keystore");
-		keystore.write().insert_ephemeral_from_seed::<P>(&authority.to_seed())
-			.expect("Creates authority key");
-
-		(keystore, keystore_path)
-	}
-
-	fn test_babe_rpc_handler(
-		deny_unsafe: DenyUnsafe
-	) -> BabeRpcHandler<Block, TestClient, sc_consensus::LongestChain<Backend, Block>> {
-		let builder = TestClientBuilder::new();
-		let (client, longest_chain) = builder.build_with_longest_chain();
-		let client = Arc::new(client);
-		let config = Config::get_or_compute(&*client).expect("config available");
-		let (_, link) = block_import(
-			config.clone(),
-			client.clone(),
-			client.clone(),
-		).expect("can initialize block-import");
-
-		let epoch_changes = link.epoch_changes().clone();
-		let keystore = create_temp_keystore::<AuthorityPair>(Ed25519Keyring::Alice).0;
-
-		BabeRpcHandler::new(
-			client.clone(),
-			epoch_changes,
-			keystore,
-			config,
-			longest_chain,
-			deny_unsafe,
-		)
 	}
 }

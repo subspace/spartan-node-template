@@ -18,18 +18,22 @@ sc-rpc-api = { version = "0.9.0", path = "../../../../../substrate/client/rpc-ap
 jsonrpc-core = "15.1.0"
 jsonrpc-core-client = "15.1.0"
 jsonrpc-derive = "15.1.0"
+jsonrpc-pubsub = "15.1.0"
 sp-consensus-poc = { version = "0.1.0", path = "../../../../primitives/consensus/poc" }
 serde = { version = "1.0.104", features=["derive"] }
 sp-blockchain = { version = "3.0.0", path = "../../../../../substrate/primitives/blockchain" }
 sp-runtime = { version = "3.0.0", path = "../../../../../substrate/primitives/runtime" }
 sc-consensus-epochs = { version = "0.9.0", path = "../../../../../substrate/client/consensus/epochs" }
 futures = { version = "0.3.4", features = ["compat"] }
+futures-timer = "3.0.2"
 derive_more = "0.99.2"
 sp-api = { version = "3.0.0", path = "../../../../../substrate/primitives/api" }
 sp-consensus = { version = "0.9.0", path = "../../../../../substrate/primitives/consensus/common" }
 sp-core = { version = "3.0.0", path = "../../../../../substrate/primitives/core" }
 sp-application-crypto = { version = "3.0.0", path = "../../../../../substrate/primitives/application-crypto" }
 sp-keystore = { version = "0.9.0", path = "../../../../../substrate/primitives/keystore" }
+log = "0.4.14"
+parking_lot = "0.11.1"
 
 [dev-dependencies]
 sc-consensus = { version = "0.9.0", path = "../../../../../substrate/client/consensus/common" }
