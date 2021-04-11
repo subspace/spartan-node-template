@@ -1,9 +1,10 @@
 [workspace]
 members = [
-    'node',
-    'pallets/*',
-    'runtime',
-	'primitives/consensus/poc'
+	'client/consensus/poc',
+	'node',
+	'pallets/*',
+	'primitives/consensus/poc',
+	'runtime',
 ]
 [profile.release]
 panic = 'unwind'
