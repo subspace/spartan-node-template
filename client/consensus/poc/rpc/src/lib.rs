@@ -18,214 +18,200 @@
 
 //! RPC api for babe.
 
-use sc_consensus_babe::{Epoch, authorship, Config};
-use futures::{FutureExt as _, TryFutureExt as _};
+use sc_consensus_babe::{SlotNumber, NewSlotNotifier, NewSlotInfo};
+use futures::{FutureExt as _, TryFutureExt as _, SinkExt, TryStreamExt, StreamExt};
 use jsonrpc_core::{
 	Error as RpcError,
 	futures::future as rpc_future,
+	Result as RpcResult,
+	futures::{
+		Future,
+		Sink,
+		Stream,
+		future::Future as Future01,
+		future::Executor as Executor01,
+	},
 };
 use jsonrpc_derive::rpc;
-use sc_consensus_epochs::{descendent_query, Epoch as EpochT, SharedEpochChanges};
-use sp_consensus_poc::{
-	AuthorityId,
-	BabeApi as BabeRuntimeApi,
-	digests::PreDigest,
-};
+use jsonrpc_pubsub::{typed::Subscriber, SubscriptionId, manager::SubscriptionManager};
+use sp_consensus_babe::AuthorityId;
 use serde::{Deserialize, Serialize};
-use sp_core::{
-	crypto::Public,
-};
-use sp_application_crypto::AppKey;
-use sp_keystore::{SyncCryptoStorePtr, SyncCryptoStore};
-use sc_rpc_api::DenyUnsafe;
-use sp_api::{ProvideRuntimeApi, BlockId};
-use sp_runtime::traits::{Block as BlockT, Header as _};
-use sp_consensus::{SelectChain, Error as ConsensusError};
-use sp_blockchain::{HeaderBackend, HeaderMetadata, Error as BlockChainError};
+use sp_core::crypto::Public;
 use std::{collections::HashMap, sync::Arc};
+use log::{debug, warn};
+use std::sync::mpsc;
+use parking_lot::Mutex;
+use futures::channel::mpsc::UnboundedSender;
+use futures::future;
+use futures::future::Either;
+use std::time::Duration;
+
+const SOLUTION_TIMEOUT: Duration = Duration::from_secs(5);
 
 type FutureResult<T> = Box<dyn rpc_future::Future<Item = T, Error = RpcError> + Send>;
+
+#[derive(Debug, Serialize, Deserialize)]
+pub struct Solution {
+	pub public_key: [u8; 32],
+	pub nonce: u64,
+	pub encoding: Vec<u8>,
+	pub signature: Vec<u8>,
+	pub tag: [u8; 8],
+}
+
+#[derive(Debug, Serialize, Deserialize)]
+pub struct ProposedProofOfSpaceResult {
+	slot_number: SlotNumber,
+	solution: Option<Solution>,
+}
 
 /// Provides rpc methods for interacting with Babe.
 #[rpc]
 pub trait BabeApi {
-	/// Returns data about which slots (primary or secondary) can be claimed in the current epoch
-	/// with the keys in the keystore.
-	#[rpc(name = "babe_epochAuthorship")]
-	fn epoch_authorship(&self) -> FutureResult<HashMap<AuthorityId, EpochAuthorship>>;
+	/// RPC metadata
+	type Metadata;
+
+	#[rpc(name = "babe_proposeProofOfSpace")]
+	fn propose_proof_of_space(&self, proposed_proof_of_space_result: ProposedProofOfSpaceResult) -> FutureResult<()>;
+
+
+	/// Slot info subscription
+	#[pubsub(subscription = "babe_slot_info", subscribe, name = "babe_subscribeSlotInfo")]
+	fn subscribe_slot_info(&self, metadata: Self::Metadata, subscriber: Subscriber<NewSlotInfo>);
+
+	/// Unsubscribe from slot info subscription.
+	#[pubsub(subscription = "babe_slot_info", unsubscribe, name = "babe_unsubscribeSlotInfo")]
+	fn unsubscribe_slot_info(
+		&self,
+		metadata: Option<Self::Metadata>,
+		id: SubscriptionId,
+	) -> RpcResult<bool>;
 }
 
 /// Implements the BabeRpc trait for interacting with Babe.
-pub struct BabeRpcHandler<B: BlockT, C, SC> {
-	/// shared reference to the client.
-	client: Arc<C>,
-	/// shared reference to EpochChanges
-	shared_epoch_changes: SharedEpochChanges<B, Epoch>,
-	/// shared reference to the Keystore
-	keystore: SyncCryptoStorePtr,
-	/// config (actually holds the slot duration)
-	babe_config: Config,
-	/// The SelectChain strategy
-	select_chain: SC,
-	/// Whether to deny unsafe calls
-	deny_unsafe: DenyUnsafe,
+pub struct BabeRpcHandler {
+	manager: SubscriptionManager,
+	notification_senders: Arc<Mutex<Vec<UnboundedSender<NewSlotInfo>>>>,
+	solution_senders: Arc<Mutex<HashMap<SlotNumber, futures::channel::mpsc::Sender<Option<Solution>>>>>,
 }
 
-impl<B: BlockT, C, SC> BabeRpcHandler<B, C, SC> {
+impl BabeRpcHandler {
 	/// Creates a new instance of the BabeRpc handler.
-	pub fn new(
-		client: Arc<C>,
-		shared_epoch_changes: SharedEpochChanges<B, Epoch>,
-		keystore: SyncCryptoStorePtr,
-		babe_config: Config,
-		select_chain: SC,
-		deny_unsafe: DenyUnsafe,
-	) -> Self {
+	pub fn new<E>(
+		executor: E,
+		new_slot_notifier: NewSlotNotifier,
+	) -> Self
+		where
+			E: Executor01<Box<dyn Future01<Item = (), Error = ()> + Send>> + Send + Sync + 'static,
+	{
+		let notification_senders: Arc<Mutex<Vec<UnboundedSender<NewSlotInfo>>>> = Arc::default();
+		let solution_senders: Arc<Mutex<HashMap<SlotNumber, futures::channel::mpsc::Sender<Option<Solution>>>>> = Arc::default();
+		std::thread::Builder::new()
+			.name("babe_rpc_nsn_handler".to_string())
+			.spawn({
+				let notification_senders = Arc::clone(&notification_senders);
+				let solution_senders = Arc::clone(&solution_senders);
+				let new_slot_notifier: std::sync::mpsc::Receiver<
+					(NewSlotInfo, mpsc::SyncSender<Option<sp_consensus_babe::digests::Solution>>)
+				> = new_slot_notifier();
+
+				move || {
+					while let Ok((new_slot_info, sync_solution_sender)) = new_slot_notifier.recv() {
+						futures::executor::block_on(async {
+							let (solution_sender, mut solution_receiver) = futures::channel::mpsc::channel(0);
+							solution_senders.lock().insert(new_slot_info.slot_number, solution_sender);
+							let mut expected_solutions_count;
+							{
+								let mut notification_senders = notification_senders.lock();
+								expected_solutions_count = notification_senders.len();
+								if expected_solutions_count == 0 {
+									let _ = sync_solution_sender.send(None);
+									return;
+								}
+								for notification_sender in notification_senders.iter_mut() {
+									if notification_sender.send(new_slot_info.clone()).await.is_err() {
+										expected_solutions_count -= 1;
+									}
+								}
+							}
+
+							let timeout = futures_timer::Delay::new(SOLUTION_TIMEOUT).map(|_| None);
+							let solution = async move {
+								// TODO: This doesn't track what client sent a solution, allowing
+								//  some clients to send multiple
+								let mut potential_solutions_left = expected_solutions_count;
+								while let Some(solution) = solution_receiver.next().await {
+									if let Some(solution) = solution {
+										return Some(sp_consensus_babe::digests::Solution {
+											public_key: AuthorityId::from_slice(&solution.public_key),
+											nonce: solution.nonce,
+											encoding: solution.encoding,
+											signature: solution.signature,
+											tag: solution.tag,
+										});
+									}
+									potential_solutions_left -= 1;
+									if potential_solutions_left == 0 {
+										break;
+									}
+								}
+
+								return None;
+							};
+
+							let solution = match future::select(timeout, Box::pin(solution)).await {
+								Either::Left((value1, _)) => value1,
+								Either::Right((value2, _)) => value2,
+							};
+
+							if let Err(error) = sync_solution_sender.send(solution) {
+								debug!("Failed to send solution: {}", error);
+							}
+
+							solution_senders.lock().remove(&new_slot_info.slot_number);
+						});
+					}
+				}
+			})
+			.expect("Failed to spawn babe rpc new slot notifier handler");
+		let manager = SubscriptionManager::new(Arc::new(executor));
 		Self {
-			client,
-			shared_epoch_changes,
-			keystore,
-			babe_config,
-			select_chain,
-			deny_unsafe,
+			manager,
+			notification_senders,
+			solution_senders,
 		}
 	}
 }
 
-impl<B, C, SC> BabeApi for BabeRpcHandler<B, C, SC>
-	where
-		B: BlockT,
-		C: ProvideRuntimeApi<B> + HeaderBackend<B> + HeaderMetadata<B, Error=BlockChainError> + 'static,
-		C::Api: BabeRuntimeApi<B>,
-		SC: SelectChain<B> + Clone + 'static,
-{
-	fn epoch_authorship(&self) -> FutureResult<HashMap<AuthorityId, EpochAuthorship>> {
-		if let Err(err) = self.deny_unsafe.check_if_safe() {
-			return Box::new(rpc_future::err(err.into()));
-		}
+impl BabeApi for BabeRpcHandler {
+	type Metadata = sc_rpc_api::Metadata;
 
-		let (
-			babe_config,
-			keystore,
-			shared_epoch,
-			client,
-			select_chain,
-		) = (
-			self.babe_config.clone(),
-			self.keystore.clone(),
-			self.shared_epoch_changes.clone(),
-			self.client.clone(),
-			self.select_chain.clone(),
-		);
+	fn propose_proof_of_space(&self, proposed_proof_of_space_result: ProposedProofOfSpaceResult) -> FutureResult<()> {
+		let sender = self.solution_senders.lock().get(&proposed_proof_of_space_result.slot_number).cloned();
 		let future = async move {
-			let header = select_chain.best_chain().map_err(Error::Consensus)?;
-			let epoch_start = client.runtime_api()
-				.current_epoch_start(&BlockId::Hash(header.hash()))
-				.map_err(|err| {
-					Error::StringError(format!("{:?}", err))
-				})?;
-			let epoch = epoch_data(
-				&shared_epoch,
-				&client,
-				&babe_config,
-				*epoch_start,
-				&select_chain,
-			)?;
-			let (epoch_start, epoch_end) = (epoch.start_slot(), epoch.end_slot());
-
-			let mut claims: HashMap<AuthorityId, EpochAuthorship> = HashMap::new();
-
-			let keys = {
-				epoch.authorities.iter()
-					.enumerate()
-					.filter_map(|(i, a)| {
-						if SyncCryptoStore::has_keys(&*keystore, &[(a.0.to_raw_vec(), AuthorityId::ID)]) {
-							Some((a.0.clone(), i))
-						} else {
-							None
-						}
-					})
-					.collect::<Vec<_>>()
-			};
-
-			for slot in *epoch_start..*epoch_end {
-				if let Some((claim, key)) =
-					authorship::claim_slot_using_keys(slot.into(), &epoch, &keystore, &keys)
-				{
-					match claim {
-						PreDigest::Primary { .. } => {
-							claims.entry(key).or_default().primary.push(slot);
-						}
-						PreDigest::SecondaryPlain { .. } => {
-							claims.entry(key).or_default().secondary.push(slot);
-						}
-						PreDigest::SecondaryVRF { .. } => {
-							claims.entry(key).or_default().secondary_vrf.push(slot.into());
-						},
-					};
-				}
+			if let Some(mut sender) = sender {
+				let _ = sender.send(proposed_proof_of_space_result.solution).await;
 			}
 
-			Ok(claims)
+			Ok(())
 		}.boxed();
-
 		Box::new(future.compat())
 	}
-}
 
-/// Holds information about the `slot`'s that can be claimed by a given key.
-#[derive(Default, Debug, Deserialize, Serialize)]
-pub struct EpochAuthorship {
-	/// the array of primary slots that can be claimed
-	primary: Vec<u64>,
-	/// the array of secondary slots that can be claimed
-	secondary: Vec<u64>,
-	/// The array of secondary VRF slots that can be claimed.
-	secondary_vrf: Vec<u64>,
-}
-
-/// Errors encountered by the RPC
-#[derive(Debug, derive_more::Display, derive_more::From)]
-pub enum Error {
-	/// Consensus error
-	Consensus(ConsensusError),
-	/// Errors that can be formatted as a String
-	StringError(String)
-}
-
-impl From<Error> for jsonrpc_core::Error {
-	fn from(error: Error) -> Self {
-		jsonrpc_core::Error {
-			message: format!("{}", error),
-			code: jsonrpc_core::ErrorCode::ServerError(1234),
-			data: None,
-		}
+	fn subscribe_slot_info(&self, _metadata: Self::Metadata, subscriber: Subscriber<NewSlotInfo>) {
+		self.manager.add(subscriber, |sink| {
+			let (tx, rx) = futures::channel::mpsc::unbounded();
+			self.notification_senders.lock().push(tx);
+			sink
+				.sink_map_err(|e| warn!("Error sending notifications: {:?}", e))
+				.send_all(rx.map(Ok::<_, ()>).compat().map(|res| Ok(res)))
+				.map(|_| ())
+		});
 	}
-}
 
-/// fetches the epoch data for a given slot.
-fn epoch_data<B, C, SC>(
-	epoch_changes: &SharedEpochChanges<B, Epoch>,
-	client: &Arc<C>,
-	babe_config: &Config,
-	slot: u64,
-	select_chain: &SC,
-) -> Result<Epoch, Error>
-	where
-		B: BlockT,
-		C: HeaderBackend<B> + HeaderMetadata<B, Error=BlockChainError> + 'static,
-		SC: SelectChain<B>,
-{
-	let parent = select_chain.best_chain()?;
-	epoch_changes.shared_data().epoch_data_for_child_of(
-		descendent_query(&**client),
-		&parent.hash(),
-		parent.number().clone(),
-		slot.into(),
-		|slot| Epoch::genesis(&babe_config, slot),
-	)
-		.map_err(|e| Error::Consensus(ConsensusError::ChainLookup(format!("{:?}", e))))?
-		.ok_or(Error::Consensus(ConsensusError::InvalidAuthoritiesSet))
+	fn unsubscribe_slot_info(&self, _metadata: Option<Self::Metadata>, id: SubscriptionId) -> RpcResult<bool> {
+		Ok(self.manager.cancel(id))
+	}
 }
 
 #[cfg(test)]
@@ -240,23 +226,18 @@ mod tests {
 		TestClientBuilder,
 	};
 	use sp_application_crypto::AppPair;
-	use sp_keyring::Sr25519Keyring;
-	use sp_core::{crypto::key_types::BABE};
-	use sp_keystore::{SyncCryptoStorePtr, SyncCryptoStore};
-	use sc_keystore::LocalKeystore;
+	use sp_keyring::Ed25519Keyring;
+	use sc_keystore::Store;
 
 	use std::sync::Arc;
 	use sc_consensus_babe::{Config, block_import, AuthorityPair};
 	use jsonrpc_core::IoHandler;
 
 	/// creates keystore backed by a temp file
-	fn create_temp_keystore<P: AppPair>(
-		authority: Sr25519Keyring,
-	) -> (SyncCryptoStorePtr, tempfile::TempDir) {
+	fn create_temp_keystore<P: AppPair>(authority: Ed25519Keyring) -> (KeyStorePtr, tempfile::TempDir) {
 		let keystore_path = tempfile::tempdir().expect("Creates keystore path");
-		let keystore = Arc::new(LocalKeystore::open(keystore_path.path(), None)
-			.expect("Creates keystore"));
-		SyncCryptoStore::sr25519_generate_new(&*keystore, BABE, Some(&authority.to_seed()))
+		let keystore = Store::open(keystore_path.path(), None).expect("Creates keystore");
+		keystore.write().insert_ephemeral_from_seed::<P>(&authority.to_seed())
 			.expect("Creates authority key");
 
 		(keystore, keystore_path)
@@ -276,7 +257,7 @@ mod tests {
 		).expect("can initialize block-import");
 
 		let epoch_changes = link.epoch_changes().clone();
-		let keystore = create_temp_keystore::<AuthorityPair>(Sr25519Keyring::Alice).0;
+		let keystore = create_temp_keystore::<AuthorityPair>(Ed25519Keyring::Alice).0;
 
 		BabeRpcHandler::new(
 			client.clone(),
@@ -286,32 +267,5 @@ mod tests {
 			longest_chain,
 			deny_unsafe,
 		)
-	}
-
-	#[test]
-	fn epoch_authorship_works() {
-		let handler = test_babe_rpc_handler(DenyUnsafe::No);
-		let mut io = IoHandler::new();
-
-		io.extend_with(BabeApi::to_delegate(handler));
-		let request = r#"{"jsonrpc":"2.0","method":"babe_epochAuthorship","params": [],"id":1}"#;
-		let response = r#"{"jsonrpc":"2.0","result":{"5GrwvaEF5zXb26Fz9rcQpDWS57CtERHpNehXCPcNoHGKutQY":{"primary":[0],"secondary":[1,2,4],"secondary_vrf":[]}},"id":1}"#;
-
-		assert_eq!(Some(response.into()), io.handle_request_sync(request));
-	}
-
-	#[test]
-	fn epoch_authorship_is_unsafe() {
-		let handler = test_babe_rpc_handler(DenyUnsafe::Yes);
-		let mut io = IoHandler::new();
-
-		io.extend_with(BabeApi::to_delegate(handler));
-		let request = r#"{"jsonrpc":"2.0","method":"babe_epochAuthorship","params": [],"id":1}"#;
-
-		let response = io.handle_request_sync(request).unwrap();
-		let mut response: serde_json::Value = serde_json::from_str(&response).unwrap();
-		let error: RpcError = serde_json::from_value(response["error"].take()).unwrap();
-
-		assert_eq!(error, RpcError::method_not_found())
 	}
 }

@@ -1,6 +1,7 @@
 [workspace]
 members = [
 	'client/consensus/poc',
+	'client/consensus/poc/rpc',
 	'frame/poc',
 	'node',
 	'pallets/*',
